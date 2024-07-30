@@ -176,26 +176,84 @@ static int DVP_Start_Capture()
 	return 0;
 }
 
+static void DVP_IR_Preprocess()
+{
+/* ----- Step 1 : Histogram Equalization ----- */
+    uint16_t* image_data = (uint16_t*)v4l2_ir_dvp_buffer_global[v4l2_ir_dvp_buffer_global_index].start;
+    int width = 640;
+    int height = 512;
+    int histogram[65536] = {0};
+    uint16_t equalized_image[width * height];
+
+    // 计算直方图
+    for (int i = 0; i < height; i++) {
+        for (int j = 0; j < width; j++) {
+            histogram[image_data[i * width + j]]++;
+        }
+    }
+
+    // 计算累积分布函数（CDF）
+    int cdf[65536] = {0};
+    cdf[0] = histogram[0];
+    for (int i = 1; i < 65536; i++) {
+        cdf[i] = cdf[i - 1] + histogram[i];
+    }
+
+    // 计算直方图均衡化后的像素值
+    float scale = 65535.0f / (width * height);
+    for (int i = 0; i < height; i++) {
+        for (int j = 0; j < width; j++) {
+            uint16_t pixel = image_data[i * width + j];
+            equalized_image[i * width + j] = (uint16_t)(cdf[pixel] * scale);
+        }
+    }
+
+/* ----- Step 2 : Mean Filtering ----- */
+    int kernel_size = 3;
+    int half_kernel = kernel_size / 2;
+    uint16_t filtered_image[width * height];
+
+    // 三次滤波
+    for (int FL_Times = 0; FL_Times < 3; ++FL_Times)
+    {
+        for (int i = 0; i < height; i++) {
+            for (int j = 0; j < width; j++) {
+                int sum = 0;
+                int count = 0;
+
+                for (int k = -half_kernel; k <= half_kernel; k++) {
+                    for (int l = -half_kernel; l <= half_kernel; l++) {
+                        int row = i + k;
+                        int col = j + l;
+
+                        if (row >= 0 && row < height && col >= 0 && col < width) {
+                            sum += equalized_image[row * width + col];
+                            count++;
+                        }
+                    }
+                }
+
+                filtered_image[i * width + j] = sum / count;
+            }
+        }
+    }
+
+    // 将滤波后的图像复制回原始图像缓冲区
+    memcpy(image_data, filtered_image, width * height * sizeof(uint16_t));
+}
+
 static int DVP_Save(FILE* fp)
 {
-	// FILE* fp = fopen("out.yuv", "a");
-
-	// fwrite(v4l2_ir_dvp_buffer_global[v4l2_ir_dvp_buffer_global_index].start, 
-	// 	v4l2_ir_dvp_buffer_global_length, sizeof(uint8_t), fp);
-
-    fwrite(v4l2_ir_dvp_buffer_global[v4l2_ir_dvp_buffer_global_index].start, 
-		640*512*2, sizeof(uint8_t), fp);
-
-	// fclose(fp);
-
-	return 0;
+    uint16_t* image_data = (uint16_t*)v4l2_ir_dvp_buffer_global[v4l2_ir_dvp_buffer_global_index].start;
+    fwrite(image_data, sizeof(uint16_t), 640 * 512, fp);
+    return 0;
 }
 
 static int DVP_Capture()
 {
     FILE* fp = fopen("out.yuv", "a");
 
-    int frames = 100;
+    int frames = 30;
     int captured_frames = 0;
     
     // 添加计时器
@@ -222,6 +280,7 @@ static int DVP_Capture()
 
         // process data
         v4l2_ir_dvp_buffer_global_index = buff.index;
+        DVP_IR_Preprocess();
         DVP_Save(fp);
         
         // 记录采集的帧数
