@@ -176,19 +176,39 @@ static int DVP_Start_Capture()
 	return 0;
 }
 
+static uint16_t background_image[640 * 512] = {0};
+static bool background_captured = false;
+
+static uint16_t prev_frame[640 * 512];  // 存储前一帧的图像
+
+#ifndef MAX
+    #define MAX(a,b) ((a) > (b) ? (a) : (b))
+#endif
+
 static void DVP_IR_Preprocess()
 {
-/* ----- Step 1 : Histogram Equalization ----- */
+/* ----- Step 1 : Background Subtraction ----- */
     uint16_t* image_data = (uint16_t*)v4l2_ir_dvp_buffer_global[v4l2_ir_dvp_buffer_global_index].start;
     int width = 640;
     int height = 512;
+    uint16_t subtracted_image[width * height];
+
+    for (int i = 0; i < height; i++) {
+        for (int j = 0; j < width; j++) {
+            subtracted_image[i * width + j] = abs(image_data[i * width + j] - background_image[i * width + j]);
+        }
+    }
+
+/* ----- Step 2 : Histogram Equalization ----- */
     int histogram[65536] = {0};
     uint16_t equalized_image[width * height];
 
     // 计算直方图
     for (int i = 0; i < height; i++) {
         for (int j = 0; j < width; j++) {
-            histogram[image_data[i * width + j]]++;
+            if (subtracted_image[i * width + j] >= 256) {
+                histogram[subtracted_image[i * width + j]]++;
+            }
         }
     }
 
@@ -203,12 +223,35 @@ static void DVP_IR_Preprocess()
     float scale = 65535.0f / (width * height);
     for (int i = 0; i < height; i++) {
         for (int j = 0; j < width; j++) {
-            uint16_t pixel = image_data[i * width + j];
-            equalized_image[i * width + j] = (uint16_t)(cdf[pixel] * scale);
+            uint16_t pixel = subtracted_image[i * width + j];
+            if (pixel >= 64) {
+                equalized_image[i * width + j] = (uint16_t)(cdf[pixel] * scale);
+            } else {
+                equalized_image[i * width + j] = pixel;
+            }
         }
     }
 
-/* ----- Step 2 : Mean Filtering ----- */
+/* ----- Step 3 : Pixel Value Mapping ----- */
+    uint16_t max_pixel_value = 0;
+    for (int i = 0; i < height; i++) {
+        for (int j = 0; j < width; j++) {
+            if (equalized_image[i * width + j] > max_pixel_value && equalized_image[i * width + j] >= 256) {
+                max_pixel_value = equalized_image[i * width + j];
+            }
+        }
+    }
+
+    float mapping_scale = 65535.0f / max_pixel_value;
+    for (int i = 0; i < height; i++) {
+        for (int j = 0; j < width; j++) {
+            if (equalized_image[i * width + j] >= 256) {
+                equalized_image[i * width + j] = (uint16_t)(equalized_image[i * width + j] * mapping_scale);
+            }
+        }
+    }
+
+/* ----- Step 4 : Mean Filtering ----- */
     int kernel_size = 3;
     int half_kernel = kernel_size / 2;
     uint16_t filtered_image[width * height];
@@ -253,7 +296,7 @@ static int DVP_Capture()
 {
     FILE* fp = fopen("out.yuv", "a");
 
-    int frames = 30;
+    int frames = 100;
     int captured_frames = 0;
     
     // 添加计时器
@@ -280,6 +323,13 @@ static int DVP_Capture()
 
         // process data
         v4l2_ir_dvp_buffer_global_index = buff.index;
+
+        // 将第一张图像作为背景
+        if (!background_captured) {
+            memcpy(background_image, v4l2_ir_dvp_buffer_global[v4l2_ir_dvp_buffer_global_index].start, 640 * 512 * sizeof(uint16_t));
+            background_captured = true;
+        }
+
         DVP_IR_Preprocess();
         DVP_Save(fp);
         

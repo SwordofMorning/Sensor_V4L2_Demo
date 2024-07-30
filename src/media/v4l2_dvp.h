@@ -24,6 +24,7 @@
 #include <linux/videodev2.h>
 #include <errno.h>  
 #include <stdint.h>
+#include <stdbool.h>
 
 /* ===== Define Begin ===== */
 #define CLEAR(x) memset(&(x), 0, sizeof(x))
