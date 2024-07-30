@@ -195,43 +195,63 @@ static int DVP_Capture()
 {
     FILE* fp = fopen("out.yuv", "a");
 
-	int frames = 100;
+    int frames = 100;
+    int captured_frames = 0;
+    
+    // 添加计时器
+    struct timeval start_time, end_time;
+    gettimeofday(&start_time, NULL);
 
-	struct v4l2_buffer buff;
-	CLEAR(buff);
-	struct v4l2_plane planes[VIDEO_MAX_PLANES];  
-	memset(planes, 0, VIDEO_MAX_PLANES * sizeof(struct v4l2_plane));
+    struct v4l2_buffer buff;
+    CLEAR(buff);
+    struct v4l2_plane planes[VIDEO_MAX_PLANES];  
+    memset(planes, 0, VIDEO_MAX_PLANES * sizeof(struct v4l2_plane));
 
-	buff.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
-	buff.memory = V4L2_MEMORY_MMAP;
-	buff.length = v4l2_ir_dvp_nplanes;
-	buff.m.planes = planes;
+    buff.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+    buff.memory = V4L2_MEMORY_MMAP;
+    buff.length = v4l2_ir_dvp_nplanes;
+    buff.m.planes = planes;
 
-	// while (1)
     for (int i = 0; i < frames; ++i)
-	{
-		if (-1 == ioctl(v4l2_ir_dvp_fd, VIDIOC_DQBUF, &buff))
-			if (errno == EAGAIN) DVP_Error("DVP_Capture() VIDIOC_DQBUF EAGAIN.");
-			else if (errno == EINVAL) DVP_Error("DVP_Capture() VIDIOC_DQBUF EINVAL.");
-			else if (errno == EIO) DVP_Error("DVP_Capture() VIDIOC_DQBUF EIO.");
-			else if (errno == EPIPE) DVP_Error("DVP_Capture() VIDIOC_DQBUF EPIPE.");
+    {
+        if (-1 == ioctl(v4l2_ir_dvp_fd, VIDIOC_DQBUF, &buff))
+            if (errno == EAGAIN) DVP_Error("DVP_Capture() VIDIOC_DQBUF EAGAIN.");
+            else if (errno == EINVAL) DVP_Error("DVP_Capture() VIDIOC_DQBUF EINVAL.");
+            else if (errno == EIO) DVP_Error("DVP_Capture() VIDIOC_DQBUF EIO.");
+            else if (errno == EPIPE) DVP_Error("DVP_Capture() VIDIOC_DQBUF EPIPE.");
 
-		// process data
-		v4l2_ir_dvp_buffer_global_index = buff.index;
+        // process data
+        v4l2_ir_dvp_buffer_global_index = buff.index;
         DVP_Save(fp);
+        
+        // 记录采集的帧数
+        captured_frames++;
 
 #if Print_Debug_Info
-	printf("DVP_TEMP: %x %x\n", 
-		v4l2_ir_dvp_buffer_global[v4l2_ir_dvp_buffer_global_index].start,
-		v4l2_ir_dvp_buffer_global[v4l2_ir_dvp_buffer_global_index].start + 1);
+    printf("DVP_TEMP: %x %x\n", 
+        v4l2_ir_dvp_buffer_global[v4l2_ir_dvp_buffer_global_index].start,
+        v4l2_ir_dvp_buffer_global[v4l2_ir_dvp_buffer_global_index].start + 1);
 #endif
 
-		if (-1 == ioctl(v4l2_ir_dvp_fd, VIDIOC_QBUF, &buff))
-			DVP_Error("DVP_Capture() fail to VIDIOC_QBUF.");
-	}
+        if (-1 == ioctl(v4l2_ir_dvp_fd, VIDIOC_QBUF, &buff))
+            DVP_Error("DVP_Capture() fail to VIDIOC_QBUF.");
+    }
+
+    // 记录结束时间
+    gettimeofday(&end_time, NULL);
+
+    // 计算采集的总时间（秒）
+    double elapsed_time = (end_time.tv_sec - start_time.tv_sec) + 
+                          (end_time.tv_usec - start_time.tv_usec) / 1000000.0;
+
+    // 计算平均帧率
+    double fps = captured_frames / elapsed_time;
+
+    printf("Captured %d frames in %.2f seconds. Average FPS: %.2f\n", 
+           captured_frames, elapsed_time, fps);
 
     fclose(fp);
-	return 0;
+    return 0;
 }
 
 static int DVP_Stop_Capture()
