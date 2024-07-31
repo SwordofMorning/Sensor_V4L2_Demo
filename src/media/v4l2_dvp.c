@@ -180,6 +180,7 @@ static uint16_t background_image[640 * 512] = {0};
 static bool background_captured = false;
 
 static uint16_t prev_frame[640 * 512];  // 存储前一帧的图像
+static uint16_t prev_prev_frame[640 * 512];  // 存储前二帧的图像
 
 #ifndef MAX
     #define MAX(a,b) ((a) > (b) ? (a) : (b))
@@ -199,21 +200,41 @@ static void DVP_IR_Preprocess()
         }
     }
 
-/* ----- Step 1.5: Gas Enhancement ----- */
-    uint16_t gas_min_value = 32;
-    uint16_t gas_max_value = 64;
+/* ----- Step 1.5: Gas Enhancement - Combined Approach ----- */
+    uint16_t gas_min_value = 20;
+    uint16_t gas_max_value = 100;
+    uint16_t gas_min_diff = 20;
+    uint16_t gas_max_diff = 50;
     uint16_t gas_enhanced_image[width * height];
 
     for (int i = 0; i < height; i++) {
         for (int j = 0; j < width; j++) {
             uint16_t pixel = subtracted_image[i * width + j];
+            uint16_t pixel_diff_prev = abs(pixel - prev_frame[i * width + j]);  // 与前一帧的差异
+            uint16_t pixel_diff_prev_prev = abs(pixel - prev_prev_frame[i * width + j]);  // 与前两帧的差异
+
             if (pixel >= gas_min_value && pixel <= gas_max_value) {
-                gas_enhanced_image[i * width + j] = (uint16_t)((pixel - gas_min_value) * (65535 - 60000) / (gas_max_value - gas_min_value) + 60000);
+                // Method 1: Interval Enhancement
+                uint16_t enhanced_pixel = (uint16_t)((pixel - gas_min_value) * (65535 - 60000) / (gas_max_value - gas_min_value) + 60000);
+
+                if (pixel_diff_prev >= gas_min_diff && pixel_diff_prev <= gas_max_diff) {
+                    // Method 2: Temporal Difference (i and i-1)
+                    gas_enhanced_image[i * width + j] = enhanced_pixel;
+                } else if (pixel_diff_prev_prev >= gas_min_diff && pixel_diff_prev_prev <= gas_max_diff) {
+                    // Method 3: Additional Enhancement (i and i-2)
+                    gas_enhanced_image[i * width + j] = (uint16_t)(enhanced_pixel * 1.2);  // 增强20%
+                } else {
+                    gas_enhanced_image[i * width + j] = pixel;
+                }
             } else {
                 gas_enhanced_image[i * width + j] = pixel;
             }
         }
     }
+
+    // 更新前两帧的图像数据
+    memcpy(prev_prev_frame, prev_frame, width * height * sizeof(uint16_t));
+    memcpy(prev_frame, subtracted_image, width * height * sizeof(uint16_t));
 
 /* ----- Step 2 : Histogram Equalization ----- */
     int histogram[65536] = {0};
