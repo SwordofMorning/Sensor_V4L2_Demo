@@ -205,6 +205,9 @@ static void DVP_IR_Preprocess()
     uint16_t gas_max_value = 100;
     uint16_t gas_min_diff = 20;
     uint16_t gas_max_diff = 50;
+    uint16_t gas_min_add = 20;
+    uint16_t gas_max_add = 100;
+    float gas_add_factor = 1.5;
     uint16_t gas_enhanced_image[width * height];
 
     for (int i = 0; i < height; i++) {
@@ -220,9 +223,10 @@ static void DVP_IR_Preprocess()
                 if (pixel_diff_prev >= gas_min_diff && pixel_diff_prev <= gas_max_diff) {
                     // Method 2: Temporal Difference (i and i-1)
                     gas_enhanced_image[i * width + j] = enhanced_pixel;
-                } else if (pixel_diff_prev_prev >= gas_min_diff && pixel_diff_prev_prev <= gas_max_diff) {
+                } else if (pixel_diff_prev_prev >= gas_min_add && pixel_diff_prev_prev <= gas_max_add) {
                     // Method 3: Additional Enhancement (i and i-2)
-                    gas_enhanced_image[i * width + j] = (uint16_t)(enhanced_pixel * 1.2);  // 增强20%
+                    uint16_t enhancement_factor = (uint16_t)((pixel_diff_prev_prev - gas_min_add) * 50 / (gas_max_add - gas_min_add) + 100);
+                    gas_enhanced_image[i * width + j] = (uint16_t)(enhanced_pixel * enhancement_factor * gas_add_factor / 100);
                 } else {
                     gas_enhanced_image[i * width + j] = pixel;
                 }
