@@ -199,6 +199,22 @@ static void DVP_IR_Preprocess()
         }
     }
 
+/* ----- Step 1.5: Gas Enhancement ----- */
+    uint16_t gas_min_value = 32;
+    uint16_t gas_max_value = 64;
+    uint16_t gas_enhanced_image[width * height];
+
+    for (int i = 0; i < height; i++) {
+        for (int j = 0; j < width; j++) {
+            uint16_t pixel = subtracted_image[i * width + j];
+            if (pixel >= gas_min_value && pixel <= gas_max_value) {
+                gas_enhanced_image[i * width + j] = (uint16_t)((pixel - gas_min_value) * (65535 - 60000) / (gas_max_value - gas_min_value) + 60000);
+            } else {
+                gas_enhanced_image[i * width + j] = pixel;
+            }
+        }
+    }
+
 /* ----- Step 2 : Histogram Equalization ----- */
     int histogram[65536] = {0};
     uint16_t equalized_image[width * height];
@@ -206,8 +222,8 @@ static void DVP_IR_Preprocess()
     // 计算直方图
     for (int i = 0; i < height; i++) {
         for (int j = 0; j < width; j++) {
-            if (subtracted_image[i * width + j] >= 256) {
-                histogram[subtracted_image[i * width + j]]++;
+            if (gas_enhanced_image[i * width + j] >= 256) {
+                histogram[gas_enhanced_image[i * width + j]]++;
             }
         }
     }
@@ -223,7 +239,7 @@ static void DVP_IR_Preprocess()
     float scale = 65535.0f / (width * height);
     for (int i = 0; i < height; i++) {
         for (int j = 0; j < width; j++) {
-            uint16_t pixel = subtracted_image[i * width + j];
+            uint16_t pixel = gas_enhanced_image[i * width + j];
             if (pixel >= 64) {
                 equalized_image[i * width + j] = (uint16_t)(cdf[pixel] * scale);
             } else {
