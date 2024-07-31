@@ -11,5 +11,5 @@ ADD_EXECUTABLE(sensor_v4l2_demo ${SRC_LIST})
 
 # Link lib and so
 TARGET_LINK_LIBRARIES(
-    sensor_v4l2_demo 
+    sensor_v4l2_demo
 )

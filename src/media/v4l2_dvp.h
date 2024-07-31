@@ -25,6 +25,7 @@
 #include <errno.h>  
 #include <stdint.h>
 #include <stdbool.h>
+#include <omp.h>
 
 /* ===== Define Begin ===== */
 #define CLEAR(x) memset(&(x), 0, sizeof(x))

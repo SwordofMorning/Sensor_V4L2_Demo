@@ -186,6 +186,10 @@ static uint16_t prev_prev_frame[640 * 512];  // 存储前二帧的图像
     #define MAX(a,b) ((a) > (b) ? (a) : (b))
 #endif
 
+int compare_uint16(const void* a, const void* b) {
+    return (*(uint16_t*)a - *(uint16_t*)b);
+}
+
 static void DVP_IR_Preprocess()
 {
 /* ----- Step 1 : Background Subtraction ----- */
@@ -194,6 +198,7 @@ static void DVP_IR_Preprocess()
     int height = 512;
     uint16_t subtracted_image[width * height];
 
+    #pragma omp parallel for
     for (int i = 0; i < height; i++) {
         for (int j = 0; j < width; j++) {
             subtracted_image[i * width + j] = abs(image_data[i * width + j] - background_image[i * width + j]);
@@ -204,12 +209,14 @@ static void DVP_IR_Preprocess()
     uint16_t gas_min_value = 20;
     uint16_t gas_max_value = 100;
     uint16_t gas_min_diff = 20;
-    uint16_t gas_max_diff = 50;
-    uint16_t gas_min_add = 20;
+    uint16_t gas_max_diff = 64;
+    uint16_t gas_min_add = 64;
     uint16_t gas_max_add = 100;
-    float gas_add_factor = 1.5;
+    float gas_add_factor_min = 0.5;
+    float gas_add_factor_max = 2.0;
     uint16_t gas_enhanced_image[width * height];
 
+    #pragma omp parallel for
     for (int i = 0; i < height; i++) {
         for (int j = 0; j < width; j++) {
             uint16_t pixel = subtracted_image[i * width + j];
@@ -225,6 +232,7 @@ static void DVP_IR_Preprocess()
                     gas_enhanced_image[i * width + j] = enhanced_pixel;
                 } else if (pixel_diff_prev_prev >= gas_min_add && pixel_diff_prev_prev <= gas_max_add) {
                     // Method 3: Additional Enhancement (i and i-2)
+                    float gas_add_factor = gas_add_factor_min + (gas_add_factor_max - gas_add_factor_min) * (pixel_diff_prev_prev - gas_min_add) / (gas_max_add - gas_min_add);
                     uint16_t enhancement_factor = (uint16_t)((pixel_diff_prev_prev - gas_min_add) * 50 / (gas_max_add - gas_min_add) + 100);
                     gas_enhanced_image[i * width + j] = (uint16_t)(enhanced_pixel * enhancement_factor * gas_add_factor / 100);
                 } else {
@@ -245,6 +253,7 @@ static void DVP_IR_Preprocess()
     uint16_t equalized_image[width * height];
 
     // 计算直方图
+    #pragma omp parallel for
     for (int i = 0; i < height; i++) {
         for (int j = 0; j < width; j++) {
             if (gas_enhanced_image[i * width + j] >= 256) {
@@ -262,6 +271,7 @@ static void DVP_IR_Preprocess()
 
     // 计算直方图均衡化后的像素值
     float scale = 65535.0f / (width * height);
+    #pragma omp parallel for
     for (int i = 0; i < height; i++) {
         for (int j = 0; j < width; j++) {
             uint16_t pixel = gas_enhanced_image[i * width + j];
@@ -275,6 +285,7 @@ static void DVP_IR_Preprocess()
 
 /* ----- Step 3 : Pixel Value Mapping ----- */
     uint16_t max_pixel_value = 0;
+    #pragma omp parallel for
     for (int i = 0; i < height; i++) {
         for (int j = 0; j < width; j++) {
             if (equalized_image[i * width + j] > max_pixel_value && equalized_image[i * width + j] >= 256) {
@@ -284,6 +295,7 @@ static void DVP_IR_Preprocess()
     }
 
     float mapping_scale = 65535.0f / max_pixel_value;
+    #pragma omp parallel for
     for (int i = 0; i < height; i++) {
         for (int j = 0; j < width; j++) {
             if (equalized_image[i * width + j] >= 256) {
@@ -292,38 +304,52 @@ static void DVP_IR_Preprocess()
         }
     }
 
-/* ----- Step 4 : Mean Filtering ----- */
+/* ----- Step 4 : Filtering ----- */
+    // 基于size的中值滤波器
     int kernel_size = 3;
     int half_kernel = kernel_size / 2;
-    uint16_t filtered_image[width * height];
+    uint16_t median_filtered_image[width * height];
 
-    // 三次滤波
-    for (int FL_Times = 0; FL_Times < 3; ++FL_Times)
-    {
-        for (int i = 0; i < height; i++) {
-            for (int j = 0; j < width; j++) {
-                int sum = 0;
-                int count = 0;
+    #pragma omp parallel for
+    for (int i = 0; i < height; i++) {
+        for (int j = 0; j < width; j++) {
+            uint16_t neighborhood[kernel_size * kernel_size];
+            int index = 0;
 
-                for (int k = -half_kernel; k <= half_kernel; k++) {
-                    for (int l = -half_kernel; l <= half_kernel; l++) {
-                        int row = i + k;
-                        int col = j + l;
+            for (int k = -half_kernel; k <= half_kernel; k++) {
+                for (int l = -half_kernel; l <= half_kernel; l++) {
+                    int row = i + k;
+                    int col = j + l;
 
-                        if (row >= 0 && row < height && col >= 0 && col < width) {
-                            sum += equalized_image[row * width + col];
-                            count++;
-                        }
+                    if (row >= 0 && row < height && col >= 0 && col < width) {
+                        neighborhood[index++] = equalized_image[row * width + col];
                     }
                 }
+            }
 
-                filtered_image[i * width + j] = sum / count;
+            // 对neighborhood数组进行排序
+            for (int m = 0; m < index - 1; m++) {
+                for (int n = 0; n < index - m - 1; n++) {
+                    if (neighborhood[n] > neighborhood[n + 1]) {
+                        uint16_t temp = neighborhood[n];
+                        neighborhood[n] = neighborhood[n + 1];
+                        neighborhood[n + 1] = temp;
+                    }
+                }
+            }
+
+            uint16_t median_value = neighborhood[index / 2];
+
+            if (abs(equalized_image[i * width + j] - median_value) > 10000 && median_value < 100) {
+                median_filtered_image[i * width + j] = median_value;
+            } else {
+                median_filtered_image[i * width + j] = equalized_image[i * width + j];
             }
         }
     }
 
     // 将滤波后的图像复制回原始图像缓冲区
-    memcpy(image_data, filtered_image, width * height * sizeof(uint16_t));
+    memcpy(image_data, median_filtered_image, width * height * sizeof(uint16_t));
 }
 
 static int DVP_Save(FILE* fp)
