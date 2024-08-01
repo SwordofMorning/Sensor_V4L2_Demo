@@ -206,11 +206,11 @@ static void DVP_IR_Preprocess()
     }
 
 /* ----- Step 1.5: Gas Enhancement - Combined Approach ----- */
-    uint16_t gas_min_value = 20;
+    uint16_t gas_min_value = 25;
     uint16_t gas_max_value = 100;
-    uint16_t gas_min_diff = 20;
+    uint16_t gas_min_diff = 25;
     uint16_t gas_max_diff = 64;
-    uint16_t gas_min_add = 64;
+    uint16_t gas_min_add = 25;
     uint16_t gas_max_add = 100;
     float gas_add_factor_min = 0.5;
     float gas_add_factor_max = 2.0;
@@ -348,8 +348,36 @@ static void DVP_IR_Preprocess()
         }
     }
 
-    // 将滤波后的图像复制回原始图像缓冲区
-    memcpy(image_data, median_filtered_image, width * height * sizeof(uint16_t));
+    // 均值滤波器
+    int mean_kernel_size = 5;
+    int mean_half_kernel = mean_kernel_size / 2;
+    uint16_t mean_filtered_image[width * height];
+
+    #pragma omp parallel for
+    for (int i = 0; i < height; i++) {
+        for (int j = 0; j < width; j++) {
+            int sum = 0;
+            int count = 0;
+
+            for (int k = -mean_half_kernel; k <= mean_half_kernel; k++) {
+                for (int l = -mean_half_kernel; l <= mean_half_kernel; l++) {
+                    int row = i + k;
+                    int col = j + l;
+
+                    if (row >= 0 && row < height && col >= 0 && col < width) {
+                        sum += median_filtered_image[row * width + col];
+                        count++;
+                    }
+                }
+            }
+
+            mean_filtered_image[i * width + j] = sum / count;
+        }
+    }
+
+/* ----- Step 5 : Re Enhancement ----- */
+
+    memcpy(image_data, mean_filtered_image, width * height * sizeof(uint16_t));
 }
 
 static int DVP_Save(FILE* fp)
